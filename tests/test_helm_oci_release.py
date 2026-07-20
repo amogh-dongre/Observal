@@ -70,3 +70,9 @@ def test_helm_docs_use_oci_install_instead_of_repo_add():
     assert "observal.github.io" not in docs_text
     assert "helm repo add observal" not in chart_readme_text
     assert "observal.github.io" not in chart_readme_text
+
+
+def test_ghcr_badge_workflow_only_runs_on_upstream_repository():
+    workflow = _load_yaml(".github/workflows/badge-ghcr-pulls.yml")
+
+    assert workflow["jobs"]["update"]["if"] == "github.repository == 'Observal/Observal'"
