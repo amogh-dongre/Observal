@@ -35,6 +35,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useRegistryList, useMyAgents, useArchivedAgents, useDeletedAgents, useWhoami, useArchiveAgent, useUnarchiveAgent, useDeleteAgent, useRestoreDeletedAgent, useSubmitDraft, useTeams } from "@/hooks/use-api";
 import { registry, getUserRole } from "@/lib/api";
+import { useOptionalAuth } from "@/hooks/use-auth";
 import { hasMinRole } from "@/hooks/use-role-guard";
 import {
   Table,
@@ -426,7 +427,8 @@ export default function AgentListPage() {
 function AgentListContent() {
   const { search: searchParam, namespace, team, category } = useSearch({ from: "/_authed/agents/" });
   const router = useRouter();
-  const { data: teams = [] } = useTeams();
+  const { isAuthenticated } = useOptionalAuth();
+  const { data: teams = [] } = useTeams(isAuthenticated);
   const selectedTeam = teams.find((item) => item.handle === team);
   const initialSearch = searchParam ?? "";
   const [search, setSearch] = useState(initialSearch);
@@ -462,10 +464,14 @@ function AgentListContent() {
     ...(category ? { category } : {}),
   });
 
-  const { data: myAgents } = useMyAgents();
-  const isAdmin = useSyncExternalStore(roleSub, () => hasMinRole(getUserRole(), "admin"), () => false);
+  const { data: myAgents } = useMyAgents(isAuthenticated);
+  const isAdmin = useSyncExternalStore(
+    roleSub,
+    () => isAuthenticated && hasMinRole(getUserRole(), "admin"),
+    () => false,
+  );
   const { data: allArchivedAgents } = useArchivedAgents(isAdmin);
-  const { data: deletedAgents = [] } = useDeletedAgents();
+  const { data: deletedAgents = [] } = useDeletedAgents(isAuthenticated);
   const submitDraft = useSubmitDraft();
   const [draftsExpanded, setDraftsExpanded] = useState(true);
   const [archivedExpanded, setArchivedExpanded] = useState(false);
@@ -473,25 +479,30 @@ function AgentListContent() {
   const [deletingDraftId, setDeletingDraftId] = useState<string | null>(null);
   const qc = useQueryClient();
 
+  const scopedMyAgents = useMemo(
+    () => (isAuthenticated ? (myAgents ?? []) : []),
+    [isAuthenticated, myAgents],
+  );
+
   const drafts = useMemo(() => {
-    return (myAgents ?? []).filter((a) => a.status === "draft" || a.status === "rejected" || a.status === "pending");
-  }, [myAgents]);
+    return scopedMyAgents.filter((a) => a.status === "draft" || a.status === "rejected" || a.status === "pending");
+  }, [scopedMyAgents]);
 
   const archivedAgents = useMemo(() => {
     if (isAdmin && allArchivedAgents) {
       return allArchivedAgents;
     }
-    return (myAgents ?? []).filter((a) => a.status === "archived");
-  }, [isAdmin, allArchivedAgents, myAgents]);
+    return scopedMyAgents.filter((a) => a.status === "archived");
+  }, [isAdmin, allArchivedAgents, scopedMyAgents]);
 
   const { filtered, pendingCount } = useMemo(() => {
     const active = agents ?? [];
     const activeIds = new Set(active.map((a) => a.id));
-    const pending = (myAgents ?? []).filter(
+    const pending = scopedMyAgents.filter(
       (a) => a.status !== "approved" && a.status !== "draft" && a.status !== "rejected" && a.status !== "archived" && !activeIds.has(a.id),
     );
     return { filtered: [...pending, ...active], pendingCount: pending.length };
-  }, [agents, myAgents]);
+  }, [agents, scopedMyAgents]);
 
   const table = useReactTable({
     data: filtered,
@@ -553,11 +564,11 @@ function AgentListContent() {
         ]}
       />
 
-      <div className="p-6 lg:p-8 w-full mx-auto space-y-5">
+      <div className="page-body w-full mx-auto space-y-5">
         {/* Toolbar */}
         <div className="space-y-2">
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="relative max-w-md flex-1 min-w-[240px]">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="relative flex-1 min-w-[240px] max-w-[360px]">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
               <Input
                 aria-label="Search agents"
@@ -567,36 +578,40 @@ function AgentListContent() {
                   setSearch(event.target.value);
                   updateFilters({ search: event.target.value || undefined });
                 }}
-                className="pl-9 h-9"
+                className="pl-9 h-[34px]"
               />
             </div>
-            <PickerSelect
-              value={team ?? ""}
-              onValueChange={(value) => updateFilters({ team: value || undefined })}
-              options={[
-                { value: "", label: "All visible teamspaces" },
-                ...teams.map((item) => ({ value: item.handle, label: `Team: ${item.name}` })),
-              ]}
-              placeholder="Teamspace"
-              className="w-[210px]"
-              inputClassName="h-9"
-            />
-            <UserSearchInput
-              value={publisherQuery}
-              onValueChange={(value) => {
-                setPublisherQuery(value);
-                if (namespace && value !== namespace && value !== `@${namespace}`) {
-                  updateFilters({ namespace: undefined });
-                }
-              }}
-              onSelect={(user) => {
-                if (!user.username) return;
-                setPublisherQuery(`@${user.username}`);
-                updateFilters({ namespace: user.username });
-              }}
-              placeholder="Publisher"
-              className="h-9 w-[220px]"
-            />
+            {isAuthenticated && (
+              <>
+                <PickerSelect
+                  value={team ?? ""}
+                  onValueChange={(value) => updateFilters({ team: value || undefined })}
+                  options={[
+                    { value: "", label: "All visible teamspaces" },
+                    ...teams.map((item) => ({ value: item.handle, label: `Team: ${item.name}` })),
+                  ]}
+                  placeholder="Teamspace"
+                  className="w-[210px]"
+                  inputClassName="h-[34px]"
+                />
+                <UserSearchInput
+                  value={publisherQuery}
+                  onValueChange={(value) => {
+                    setPublisherQuery(value);
+                    if (namespace && value !== namespace && value !== `@${namespace}`) {
+                      updateFilters({ namespace: undefined });
+                    }
+                  }}
+                  onSelect={(user) => {
+                    if (!user.username) return;
+                    setPublisherQuery(`@${user.username}`);
+                    updateFilters({ namespace: user.username });
+                  }}
+                  placeholder="Publisher"
+                  className="h-[34px] w-[220px]"
+                />
+              </>
+            )}
             <PickerSelect
               value={category ?? ""}
               onValueChange={(value) => updateFilters({ category: value || undefined })}
@@ -606,13 +621,13 @@ function AgentListContent() {
               ]}
               placeholder="Category"
               className="w-[190px]"
-              inputClassName="h-9"
+              inputClassName="h-[34px]"
             />
-            <div className="flex items-center border border-border rounded-md overflow-hidden ml-auto">
+            <div className="flex items-center rounded-[9px] border border-border overflow-hidden ml-auto">
               <Button
                 variant={view === "table" ? "secondary" : "ghost"}
                 size="sm"
-                className="rounded-none h-8 px-2.5"
+                className="rounded-none h-[34px] px-2.5"
                 onClick={() => setView("table")}
                 aria-label="Table view"
               >
@@ -621,7 +636,7 @@ function AgentListContent() {
               <Button
                 variant={view === "grid" ? "secondary" : "ghost"}
                 size="sm"
-                className="rounded-none h-8 px-2.5"
+                className="rounded-none h-[34px] px-2.5"
                 onClick={() => setView("grid")}
                 aria-label="Grid view"
               >
@@ -657,7 +672,7 @@ function AgentListContent() {
         </div>
 
         {/* My Drafts */}
-        {drafts.length > 0 && (
+        {isAuthenticated && drafts.length > 0 && (
           <div className="rounded-lg border border-border bg-card">
             <button
               type="button"
@@ -741,7 +756,7 @@ function AgentListContent() {
         )}
 
         {/* Archived */}
-        {archivedAgents.length > 0 && (
+        {isAuthenticated && archivedAgents.length > 0 && (
           <div className="rounded-lg border border-border bg-card">
             <button
               type="button"
@@ -798,7 +813,7 @@ function AgentListContent() {
         )}
 
         {/* Deleted */}
-        {deletedAgents.length > 0 && (
+        {isAuthenticated && deletedAgents.length > 0 && (
           <div className="rounded-lg border border-border bg-card">
             <button
               type="button"
